@@ -24,7 +24,10 @@
     }
   ],
   "env": {
+    "APP_ENV": "production",
     "DB_HOST": "sqlite",
+    "DB_USER": "cu_documents",
+    "TRUSTED_HOSTS": "campus-opportunity-plan-cu.vercel.app,.vercel.app",
     "FLASK_SECRET_KEY": "campus-opportunity-planner-vercel-secure-session-key-production"
   }
 }

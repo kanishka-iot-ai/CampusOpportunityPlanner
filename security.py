@@ -92,41 +92,40 @@ def rate_limit():
 
 
 def configure(app):
-    production=os.getenv('APP_ENV','development').lower()=='production'
+    is_vercel=bool(os.getenv('VERCEL') or os.getenv('VERCEL_ENV'))
+    production=(os.getenv('APP_ENV','development').lower()=='production') or is_vercel
     key=app.secret_key
     if not key or len(key)<32 or key.startswith(('replace-','change-')):
         raise RuntimeError('Configure a private FLASK_SECRET_KEY of at least 32 characters in .env.')
-    app.config.update(DEBUG=False,PRODUCTION=production,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax',
-        SESSION_COOKIE_SECURE=production,PERMANENT_SESSION_LIFETIME=timedelta(hours=8),MAX_CONTENT_LENGTH=1024*1024,
-        MAX_FORM_MEMORY_SIZE=256*1024,MAX_FORM_PARTS=500,RATE_LIMIT_ENABLED=True,
-        TRUSTED_HOSTS=['127.0.0.1','localhost','[::1]'])
+    
+    trusted_hosts=['127.0.0.1','localhost','[::1]']
     if production:
-        # Explicit hosts from env var (may be empty if not configured)
         explicit_hosts=[host.strip() for host in os.getenv('TRUSTED_HOSTS','').split(',') if host.strip()]
-        # is_vercel: true only when actually running inside Vercel serverless runtime
-        is_vercel = bool(os.getenv('VERCEL') or os.getenv('VERCEL_ENV'))
-        hosts = list(explicit_hosts)
-        # Only inject Vercel URLs when actually on Vercel — not just because VERCEL_URL is set
+        hosts=list(explicit_hosts)
         if is_vercel:
+            hosts.extend(['.vercel.app','campus-opportunity-plan-cu.vercel.app'])
             for v_env in ('VERCEL_URL','VERCEL_PROJECT_PRODUCTION_URL'):
                 vh=os.getenv(v_env,'').strip()
                 if vh and vh not in hosts:
                     hosts.append(vh)
-            if '.vercel.app' not in hosts:
-                hosts.append('.vercel.app')
-            if 'accademic-opportunity-tracker.vercel.app' not in hosts:
-                hosts.append('accademic-opportunity-tracker.vercel.app')
         else:
-            # Non-Vercel: still trust VERCEL_URL if present (e.g. local dev referencing it)
             for v_env in ('VERCEL_URL','VERCEL_PROJECT_PRODUCTION_URL'):
                 vh=os.getenv(v_env,'').strip()
                 if vh and vh not in explicit_hosts and vh not in hosts:
                     hosts.append(vh)
-        db_user = os.getenv('DB_USER', 'cu_documents' if is_vercel else 'root').lower()
-        # Guard: explicit_hosts must be non-empty for standard production (Vercel provides auto-hosts)
-        if (not is_vercel and not explicit_hosts) or (db_user == 'root' and not is_vercel):
-            raise RuntimeError('Production requires TRUSTED_HOSTS and a dedicated non-root database user.')
-        app.config['TRUSTED_HOSTS']=hosts
+            db_user=os.getenv('DB_USER','root').lower()
+            if not explicit_hosts or db_user=='root':
+                raise RuntimeError('Production requires TRUSTED_HOSTS and a dedicated non-root database user.')
+        trusted_hosts.extend(hosts)
+        trusted_hosts=list(dict.fromkeys(trusted_hosts))
+    elif is_vercel:
+        trusted_hosts.extend(['.vercel.app','campus-opportunity-plan-cu.vercel.app'])
+        trusted_hosts=list(dict.fromkeys(trusted_hosts))
+
+    app.config.update(DEBUG=False,PRODUCTION=production,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SAMESITE='Lax',
+        SESSION_COOKIE_SECURE=production,PERMANENT_SESSION_LIFETIME=timedelta(hours=8),MAX_CONTENT_LENGTH=1024*1024,
+        MAX_FORM_MEMORY_SIZE=256*1024,MAX_FORM_PARTS=500,RATE_LIMIT_ENABLED=True,
+        TRUSTED_HOSTS=trusted_hosts)
     app.teardown_appcontext(close_db)
 
     @app.before_request
@@ -134,7 +133,7 @@ def configure(app):
         g.user=None
         if isinstance(request.routing_exception,SecurityError):
             return render_template('invalid_request.html'),400
-        if app.config['PRODUCTION'] and not request.is_secure:
+        if app.config['PRODUCTION'] and not (request.is_secure or request.headers.get('X-Forwarded-Proto','').lower()=='https'):
             return render_template('security_error.html',title='HTTPS required',message='Use the secure HTTPS application address.'),400
         session.setdefault('csrf',secrets.token_urlsafe(32))
         if request.method in ('POST','PUT','PATCH','DELETE'):
