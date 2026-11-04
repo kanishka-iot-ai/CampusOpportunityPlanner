@@ -101,19 +101,30 @@ def configure(app):
         MAX_FORM_MEMORY_SIZE=256*1024,MAX_FORM_PARTS=500,RATE_LIMIT_ENABLED=True,
         TRUSTED_HOSTS=['127.0.0.1','localhost','[::1]'])
     if production:
-        hosts=[host.strip() for host in os.getenv('TRUSTED_HOSTS','').split(',') if host.strip()]
-        for v_env in ('VERCEL_URL','VERCEL_PROJECT_PRODUCTION_URL'):
-            vh=os.getenv(v_env,'').strip()
-            if vh and vh not in hosts:
-                hosts.append(vh)
+        # Explicit hosts from env var (may be empty if not configured)
+        explicit_hosts=[host.strip() for host in os.getenv('TRUSTED_HOSTS','').split(',') if host.strip()]
+        # is_vercel: true only when actually running inside Vercel serverless runtime
         is_vercel = bool(os.getenv('VERCEL') or os.getenv('VERCEL_ENV'))
-        if is_vercel or any('vercel.app' in h for h in hosts):
+        hosts = list(explicit_hosts)
+        # Only inject Vercel URLs when actually on Vercel — not just because VERCEL_URL is set
+        if is_vercel:
+            for v_env in ('VERCEL_URL','VERCEL_PROJECT_PRODUCTION_URL'):
+                vh=os.getenv(v_env,'').strip()
+                if vh and vh not in hosts:
+                    hosts.append(vh)
             if '.vercel.app' not in hosts:
                 hosts.append('.vercel.app')
             if 'accademic-opportunity-tracker.vercel.app' not in hosts:
                 hosts.append('accademic-opportunity-tracker.vercel.app')
+        else:
+            # Non-Vercel: still trust VERCEL_URL if present (e.g. local dev referencing it)
+            for v_env in ('VERCEL_URL','VERCEL_PROJECT_PRODUCTION_URL'):
+                vh=os.getenv(v_env,'').strip()
+                if vh and vh not in explicit_hosts and vh not in hosts:
+                    hosts.append(vh)
         db_user = os.getenv('DB_USER', 'cu_documents' if is_vercel else 'root').lower()
-        if not hosts or (db_user == 'root' and not is_vercel):
+        # Guard: explicit_hosts must be non-empty for standard production (Vercel provides auto-hosts)
+        if (not is_vercel and not explicit_hosts) or (db_user == 'root' and not is_vercel):
             raise RuntimeError('Production requires TRUSTED_HOSTS and a dedicated non-root database user.')
         app.config['TRUSTED_HOSTS']=hosts
     app.teardown_appcontext(close_db)

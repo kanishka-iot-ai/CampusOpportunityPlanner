@@ -115,9 +115,10 @@ class SQLiteWrapper:
 def get_sqlite_connection():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     bundled_db = os.path.join(base_dir, "database", "app.db")
+    is_vercel = bool(os.getenv("VERCEL") or os.getenv("VERCEL_ENV"))
     
     # In Vercel or read-only container environments, use /tmp
-    target_db = "/tmp/campus_opportunity_planner.db" if os.path.exists("/tmp") else bundled_db
+    target_db = "/tmp/campus_opportunity_planner.db" if (is_vercel and os.path.exists("/tmp")) else bundled_db
     if target_db != bundled_db and (not os.path.exists(target_db) or os.path.getsize(target_db) == 0):
         if os.path.exists(bundled_db):
             shutil.copyfile(bundled_db, target_db)
@@ -175,8 +176,10 @@ def get_db_connection():
                 cursor.close()
             return connection
         except Exception:
-            # On Vercel, seamlessly fallback to SQLite so the site never crashes with 503
-            if is_vercel or not db_host:
+            # Fallback to SQLite so the app works seamlessly when MySQL is unreachable or on Vercel
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            bundled_db = os.path.join(base_dir, "database", "app.db")
+            if is_vercel or not db_host or os.path.exists(bundled_db):
                 return get_sqlite_connection()
             raise
 
